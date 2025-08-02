@@ -4,6 +4,7 @@ import { z } from "zod";
 export const env = createEnv({
 	server: {
 		CLERK_SECRET_KEY: z.string().min(1),
+		V0_API_KEY: z.string().min(1),
 	},
 	client: {
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
@@ -12,6 +13,7 @@ export const env = createEnv({
 	},
 	runtimeEnv: {
 		CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
+		V0_API_KEY: process.env.V0_API_KEY,
 		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
 			process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
