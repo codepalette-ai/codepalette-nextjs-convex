@@ -1,7 +1,7 @@
 import { env } from "@/env";
 
 // Allow responses up to 30 seconds
-export const maxDuration = 30;
+export const maxDuration = 300;
 
 const V0_API_BASE = "https://api.v0.dev/v1";
 
