@@ -5,6 +5,11 @@ export const maxDuration = 600;
 
 const V0_API_BASE = "https://api.v0.dev/v1";
 
+
+const INITIAL_MESSAGE_INSTRUCTIONS = `
+You are an expert in building Next.js 15 web application for prototyping. There is no need to have a backend like Supabase or other backend systens. You just need to create a beautiful interface that's relevant to the user with the existing code that uses Next.js 15 App Router, Tailwind CSS v4 and Shadcn. 
+`;
+
 export async function POST(req: Request) {
 	try {
 		const { messages, chatId, images = [] } = await req.json();
@@ -64,7 +69,12 @@ export async function POST(req: Request) {
 		}
 
 		const messagePayload = {
-			message: messageContent,
+			message: INITIAL_MESSAGE_INSTRUCTIONS + messageContent,
+			modelConfiguration: {
+				modelId: 'v0-gpt-5',
+				imageGenerations: false,
+				thinking: false
+			}
 		};
 
 		console.log("Sending message to v0 chat:", {

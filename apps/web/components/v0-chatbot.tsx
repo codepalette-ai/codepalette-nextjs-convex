@@ -11,23 +11,14 @@ import {
 import { Input } from "@workspace/design-system/components/input";
 import { ScrollArea } from "@workspace/design-system/components/scroll-area";
 import {
-	Tabs,
-	TabsContent,
-	TabsList,
-	TabsTrigger,
-} from "@workspace/design-system/components/tabs";
-import {
 	Code,
-	Copy,
 	Download,
 	ExternalLink,
 	Paperclip,
 	Play,
 	Send,
 } from "lucide-react";
-import { useRef, useState } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useRef, useState, useEffect, useCallback } from "react";
 
 interface Message {
 	id: string;
@@ -62,7 +53,10 @@ export function V0Chatbot() {
 	const [input, setInput] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
 	const [chatId, setChatId] = useState<string | null>(null);
+	const [pollingProgress, setPollingProgress] = useState<string>("");
+	const [isPolling, setIsPolling] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
 	const handleImageAttachment = (
 		event: React.ChangeEvent<HTMLInputElement>,
@@ -74,6 +68,67 @@ export function V0Chatbot() {
 	const removeImage = (index: number) => {
 		setAttachedImages((prev) => prev.filter((_, i) => i !== index));
 	};
+
+	// Polling function to check for v0 updates
+	const pollChatUpdates = useCallback(async (currentChatId: string) => {
+		try {
+			const response = await fetch(`/api/chat/poll?chatId=${currentChatId}`);
+			if (!response.ok) return;
+
+			const data = await response.json();
+			if (data.success && data.chat) {
+				const updatedChat = data.chat;
+				
+				// Check if there's a new demo URL or files
+				const hasNewDemo = updatedChat.latestVersion?.demoUrl && 
+					updatedChat.latestVersion.demoUrl !== currentChat?.demoUrl &&
+					updatedChat.latestVersion.demoUrl !== currentChat?.latestVersion?.demoUrl;
+
+				if (hasNewDemo || data.progressUpdate) {
+					setCurrentChat({
+						id: updatedChat.id,
+						name: updatedChat.name || "v0 Chat",
+						webUrl: updatedChat.webUrl,
+						demoUrl: updatedChat.latestVersion?.demoUrl,
+						files: updatedChat.latestVersion?.files,
+						latestVersion: updatedChat.latestVersion,
+					});
+
+					if (data.progressUpdate) {
+						setPollingProgress(data.progressUpdate);
+					}
+
+					// If we got a demo URL, we can stop polling
+					if (hasNewDemo) {
+						setIsPolling(false);
+						setPollingProgress("");
+						if (pollingIntervalRef.current) {
+							clearInterval(pollingIntervalRef.current);
+							pollingIntervalRef.current = null;
+						}
+					}
+				}
+			}
+		} catch (error) {
+			console.error("Polling error:", error);
+		}
+	}, [currentChat]);
+
+	// Start polling when we have a chat ID and are loading
+	useEffect(() => {
+		if (chatId && isPolling && !pollingIntervalRef.current) {
+			pollingIntervalRef.current = setInterval(() => {
+				pollChatUpdates(chatId);
+			}, 2000); // Poll every 2 seconds
+		}
+
+		return () => {
+			if (pollingIntervalRef.current) {
+				clearInterval(pollingIntervalRef.current);
+				pollingIntervalRef.current = null;
+			}
+		};
+	}, [chatId, isPolling, pollChatUpdates]);
 
 	const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		setInput(e.target.value);
@@ -132,6 +187,8 @@ export function V0Chatbot() {
 		setMessages((prev) => [...prev, userMessage]);
 		setInput("");
 		setIsLoading(true);
+		setIsPolling(true);
+		setPollingProgress("Sending request to v0...");
 		setAttachedImages([]);
 
 		try {
@@ -175,6 +232,15 @@ export function V0Chatbot() {
 					files: data.files,
 					latestVersion: data.chat.latestVersion,
 				});
+
+				// If we have a demo URL immediately, stop polling
+				if (data.demoUrl || data.chat.latestVersion?.demoUrl) {
+					setIsPolling(false);
+					setPollingProgress("");
+				} else {
+					// Start polling for updates
+					setPollingProgress("v0 is generating your app...");
+				}
 			}
 
 			// Add assistant response
@@ -297,8 +363,8 @@ export function V0Chatbot() {
 
 	return (
 		<div className="flex h-screen bg-background" onPaste={handleGlobalPaste}>
-			{/* Left Panel - Chat Interface */}
-			<div className="flex-1 flex flex-col border-r">
+			{/* Left Panel - Chat Interface (25%) */}
+			<div className="w-1/4 flex flex-col border-r">
 				<div className="p-4 border-b">
 					<h1 className="text-2xl font-bold">Quantum Apps AI</h1>
 					<p className="text-muted-foreground">
@@ -342,13 +408,15 @@ export function V0Chatbot() {
 							</div>
 						))}
 
-						{isLoading && (
+						{(isLoading || isPolling) && (
 							<div className="flex justify-start">
 								<Card className="max-w-[80%]">
 									<CardContent className="p-3">
 										<div className="flex items-center space-x-2">
 											<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-											<span>Generating your application...</span>
+											<span>
+												{pollingProgress || "Generating your application..."}
+											</span>
 										</div>
 									</CardContent>
 								</Card>
@@ -423,10 +491,10 @@ export function V0Chatbot() {
 				</div>
 			</div>
 
-			{/* Right Panel - Code Preview */}
-			<div className="flex-1 flex flex-col">
+			{/* Right Panel - Live Preview Only (75%) */}
+			<div className="w-3/4 flex flex-col">
 				<div className="p-4 border-b flex items-center justify-between">
-					<h2 className="text-xl font-semibold">Generated App</h2>
+					<h2 className="text-xl font-semibold">Live Preview</h2>
 					{currentChat && (
 						<div className="flex space-x-2">
 							<Button size="sm" variant="outline" onClick={downloadProject}>
@@ -441,8 +509,8 @@ export function V0Chatbot() {
 									!currentChat.demoUrl && !currentChat.latestVersion?.demoUrl
 								}
 							>
-								<Play className="h-4 w-4 mr-2" />
-								Preview
+								<ExternalLink className="h-4 w-4 mr-2" />
+								Open Full Screen
 							</Button>
 							<Button size="sm" variant="outline" onClick={openInV0}>
 								<ExternalLink className="h-4 w-4 mr-2" />
@@ -453,97 +521,31 @@ export function V0Chatbot() {
 				</div>
 
 				{currentChat ? (
-					<div className="flex-1">
-						<Tabs defaultValue="preview" className="h-full">
-							<TabsList className="grid w-full grid-cols-2">
-								<TabsTrigger value="preview">Live Preview</TabsTrigger>
-								<TabsTrigger value="files">Code Files</TabsTrigger>
-							</TabsList>
-
-							<TabsContent value="preview" className="h-full">
-								<div className="p-4 h-full">
-									{currentChat.demoUrl || currentChat.latestVersion?.demoUrl ? (
-										<Card className="h-full">
-											<CardHeader className="pb-2">
-												<div className="flex items-center justify-between">
-													<CardTitle className="text-sm">Live Demo</CardTitle>
-													<Button size="sm" variant="ghost" onClick={openDemo}>
-														<ExternalLink className="h-4 w-4" />
-													</Button>
-												</div>
-											</CardHeader>
-											<CardContent className="p-0 h-full">
-												<iframe
-													src={
-														currentChat.demoUrl ||
-														currentChat.latestVersion?.demoUrl
-													}
-													className="w-full h-full border-0 rounded-b-md"
-													title="v0 Generated App Preview"
-												/>
-											</CardContent>
-										</Card>
-									) : (
-										<Card className="h-full">
-											<CardContent className="p-4 h-full">
-												<div className="h-full bg-muted rounded-md flex items-center justify-center">
-													<div className="text-center text-muted-foreground">
-														<Play className="mx-auto h-12 w-12 mb-4 opacity-50" />
-														<p>Generating preview...</p>
-														<p className="text-sm">
-															Your app will appear here shortly
-														</p>
-													</div>
-												</div>
-											</CardContent>
-										</Card>
-									)}
+					<div className="flex-1 p-4">
+						{currentChat.demoUrl || currentChat.latestVersion?.demoUrl ? (
+							<div className="h-full">
+								<iframe
+									src={
+										currentChat.demoUrl ||
+										currentChat.latestVersion?.demoUrl
+									}
+									className="w-full h-full rounded-md border border-border"
+									title="v0 Generated App Preview"
+								/>
+							</div>
+						) : (
+							<div className="h-full bg-muted rounded-md flex items-center justify-center">
+								<div className="text-center text-muted-foreground">
+									<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+									<p className="text-lg font-medium">
+										{pollingProgress || "Generating your app..."}
+									</p>
+									<p className="text-sm mt-2">
+										v0 is working on your request. Preview will appear here shortly.
+									</p>
 								</div>
-							</TabsContent>
-
-							<TabsContent value="files" className="h-full">
-								<ScrollArea className="h-full">
-									<div className="p-4">
-										<div className="mb-4">
-											<Badge variant="outline">React + Vite</Badge>
-											<p className="mt-2 text-sm text-muted-foreground">
-												{currentChat.name}
-											</p>
-										</div>
-
-										<div className="space-y-4">
-											{currentChat.files?.map((file, index) => (
-												<Card key={index}>
-													<CardHeader className="pb-2">
-														<div className="flex items-center justify-between">
-															<CardTitle className="text-sm">
-																{file.name}
-															</CardTitle>
-															<Button
-																size="sm"
-																variant="ghost"
-																onClick={() => copyCode(file.content)}
-															>
-																<Copy className="h-4 w-4" />
-															</Button>
-														</div>
-													</CardHeader>
-													<CardContent>
-														<SyntaxHighlighter
-															language={file.lang}
-															style={oneDark}
-															className="rounded-md text-sm"
-														>
-															{file.content}
-														</SyntaxHighlighter>
-													</CardContent>
-												</Card>
-											))}
-										</div>
-									</div>
-								</ScrollArea>
-							</TabsContent>
-						</Tabs>
+							</div>
+						)}
 					</div>
 				) : (
 					<div className="flex-1 flex items-center justify-center">
