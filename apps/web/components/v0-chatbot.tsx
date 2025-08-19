@@ -79,14 +79,53 @@ export function V0Chatbot() {
 		setInput(e.target.value);
 	};
 
+	const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+		const clipboardData = e.clipboardData;
+		if (!clipboardData) return;
+
+		const items = Array.from(clipboardData.items);
+		const imageItems = items.filter(item => item.type.startsWith('image/'));
+
+		if (imageItems.length > 0) {
+			e.preventDefault(); // Prevent default paste behavior for images
+			
+			imageItems.forEach(item => {
+				const file = item.getAsFile();
+				if (file) {
+					// Create a unique name for pasted images
+					const timestamp = Date.now();
+					const extension = file.type.split('/')[1] || 'png';
+					const pastedFile = new File([file], `pasted-image-${timestamp}.${extension}`, {
+						type: file.type
+					});
+					
+					setAttachedImages(prev => [...prev, pastedFile]);
+				}
+			});
+		}
+	};
+
 	const handleFormSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		if (!input.trim() || isLoading) return;
+		if ((!input.trim() && attachedImages.length === 0) || isLoading) return;
+
+		// Convert attached images to base64
+		const imageFiles = await Promise.all(
+			attachedImages.map(async (file) => {
+				const base64 = await convertImageToBase64(file);
+				return {
+					name: file.name,
+					content: base64,
+					type: file.type,
+					size: file.size,
+				};
+			})
+		);
 
 		const userMessage: Message = {
 			id: Date.now().toString(),
 			role: "user",
-			content: input.trim(),
+			content: input.trim() || `Uploaded ${attachedImages.length} image(s)`,
 			createdAt: new Date(),
 		};
 
@@ -107,6 +146,7 @@ export function V0Chatbot() {
 						content: msg.content,
 					})),
 					chatId: chatId,
+					images: imageFiles,
 				}),
 			});
 
@@ -206,8 +246,57 @@ export function V0Chatbot() {
 		}
 	};
 
+	// Helper function to convert image to base64
+	const convertImageToBase64 = (file: File): Promise<string> => {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onload = () => {
+				const result = reader.result;
+				if (typeof result === 'string') {
+					// Remove data URL prefix to get just the base64 content
+					const base64Content = result.split(',')[1];
+					if (base64Content) {
+						resolve(base64Content);
+					} else {
+						reject(new Error('Failed to extract base64 content'));
+					}
+				} else {
+					reject(new Error('FileReader result is not a string'));
+				}
+			};
+			reader.onerror = (error) => reject(error);
+			reader.readAsDataURL(file);
+		});
+	};
+
+	// Handle paste anywhere in the chat area
+	const handleGlobalPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+		const clipboardData = e.clipboardData;
+		if (!clipboardData) return;
+
+		const items = Array.from(clipboardData.items);
+		const imageItems = items.filter(item => item.type.startsWith('image/'));
+
+		if (imageItems.length > 0) {
+			e.preventDefault();
+			
+			imageItems.forEach(item => {
+				const file = item.getAsFile();
+				if (file) {
+					const timestamp = Date.now();
+					const extension = file.type.split('/')[1] || 'png';
+					const pastedFile = new File([file], `pasted-image-${timestamp}.${extension}`, {
+						type: file.type
+					});
+					
+					setAttachedImages(prev => [...prev, pastedFile]);
+				}
+			});
+		}
+	};
+
 	return (
-		<div className="flex h-screen bg-background">
+		<div className="flex h-screen bg-background" onPaste={handleGlobalPaste}>
 			{/* Left Panel - Chat Interface */}
 			<div className="flex-1 flex flex-col border-r">
 				<div className="p-4 border-b">
@@ -227,6 +316,9 @@ export function V0Chatbot() {
 								<p>
 									Describe your React application and I'll generate the code for
 									you.
+								</p>
+								<p className="text-sm mt-2 opacity-75">
+									💡 Tip: You can paste images directly (Ctrl+V) or use the 📎 button
 								</p>
 							</div>
 						)}
@@ -272,16 +364,23 @@ export function V0Chatbot() {
 							<div className="flex flex-wrap gap-2">
 								{attachedImages.map((image, index) => (
 									<div key={index} className="relative">
-										<Badge variant="secondary" className="pr-6">
-											{image.name}
-											<button
-												onClick={() => removeImage(index)}
-												type="button"
-												className="absolute right-1 top-1/2 -translate-y-1/2 hover:bg-destructive/20 rounded-full p-0.5"
-											>
-												×
-											</button>
-										</Badge>
+										<div className="flex items-center gap-2 p-2 border rounded-md bg-muted">
+											<img
+												src={URL.createObjectURL(image)}
+												alt={image.name}
+												className="w-10 h-10 object-cover rounded"
+											/>
+											<Badge variant="secondary" className="pr-6">
+												{image.name}
+												<button
+													onClick={() => removeImage(index)}
+													type="button"
+													className="absolute right-1 top-1/2 -translate-y-1/2 hover:bg-destructive/20 rounded-full p-0.5"
+												>
+													×
+												</button>
+											</Badge>
+										</div>
 									</div>
 								))}
 							</div>
@@ -293,7 +392,8 @@ export function V0Chatbot() {
 							<Input
 								value={input}
 								onChange={handleInputChange}
-								placeholder="Describe the React application you want to build..."
+								onPaste={handlePaste}
+								placeholder="Describe the React application you want to build... (or paste images)"
 								className="pr-10"
 								disabled={isLoading}
 							/>
@@ -307,9 +407,9 @@ export function V0Chatbot() {
 								<Paperclip className="h-4 w-4" />
 							</Button>
 						</div>
-						<Button type="submit" disabled={isLoading || !input.trim()}>
-							<Send className="h-4 w-4" />
-						</Button>
+													<Button type="submit" disabled={isLoading || (!input.trim() && attachedImages.length === 0)}>
+								<Send className="h-4 w-4" />
+							</Button>
 					</form>
 
 					<input
