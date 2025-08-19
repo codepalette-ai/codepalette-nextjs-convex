@@ -82,7 +82,8 @@ export async function POST(req: Request) {
 			payload: messagePayload,
 		});
 
-		const messageResponse = await fetch(
+		// Send message to v0 without waiting for completion (fire and forget)
+		fetch(
 			`${V0_API_BASE}/chats/${currentChatId}/messages`,
 			{
 				method: "POST",
@@ -92,24 +93,16 @@ export async function POST(req: Request) {
 				},
 				body: JSON.stringify(messagePayload),
 			},
-		);
+		).catch(error => {
+			console.error("Error sending message to v0:", error);
+		});
 
-		if (!messageResponse.ok) {
-			const errorText = await messageResponse.text();
-			console.error("v0 API message error:", {
-				status: messageResponse.status,
-				statusText: messageResponse.statusText,
-				body: errorText,
-			});
-			throw new Error(
-				`Failed to send message: ${messageResponse.status} ${messageResponse.statusText} - ${errorText}`,
-			);
-		}
+		console.log("Message sent to v0 (async):", {
+			chatId: currentChatId,
+			payload: messagePayload,
+		});
 
-		const messageData = await messageResponse.json();
-		console.log("Message sent to v0:", messageData);
-
-		// Get the updated chat with the latest response
+		// Return immediately with chat info for polling to begin
 		const chatResponse = await fetch(`${V0_API_BASE}/chats/${currentChatId}`, {
 			headers: {
 				Authorization: `Bearer ${env.V0_API_KEY}`,

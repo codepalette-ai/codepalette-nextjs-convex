@@ -25,6 +25,7 @@ interface Message {
 	role: "user" | "assistant";
 	content: string;
 	createdAt: Date;
+	isV0Message?: boolean; // Flag to distinguish v0 messages from our local messages
 }
 
 interface V0File {
@@ -79,12 +80,42 @@ export function V0Chatbot() {
 			if (data.success && data.chat) {
 				const updatedChat = data.chat;
 				
+				// Process v0 messages and merge with local messages
+				if (data.messages && Array.isArray(data.messages)) {
+					const v0Messages: Message[] = data.messages
+						.filter((msg: any) => msg.role === "assistant")
+						.map((msg: any) => ({
+							id: msg.id,
+							role: "assistant" as const,
+							content: msg.content,
+							createdAt: new Date(msg.createdAt),
+							isV0Message: true,
+						}));
+
+					// Merge v0 messages with existing messages, avoiding duplicates
+					setMessages(prevMessages => {
+						const existingIds = new Set(prevMessages.map(m => m.id));
+						const newV0Messages = v0Messages.filter(msg => !existingIds.has(msg.id));
+						
+						if (newV0Messages.length > 0) {
+							// Remove any non-v0 assistant messages and add v0 messages
+							const filteredMessages = prevMessages.filter(m => 
+								m.role === "user" || !m.isV0Message
+							);
+							return [...filteredMessages, ...v0Messages].sort(
+								(a, b) => a.createdAt.getTime() - b.createdAt.getTime()
+							);
+						}
+						return prevMessages;
+					});
+				}
+				
 				// Check if there's a new demo URL or files
 				const hasNewDemo = updatedChat.latestVersion?.demoUrl && 
 					updatedChat.latestVersion.demoUrl !== currentChat?.demoUrl &&
 					updatedChat.latestVersion.demoUrl !== currentChat?.latestVersion?.demoUrl;
 
-				if (hasNewDemo || data.progressUpdate) {
+				if (hasNewDemo || data.progressUpdate || updatedChat.latestVersion) {
 					setCurrentChat({
 						id: updatedChat.id,
 						name: updatedChat.name || "v0 Chat",
@@ -119,7 +150,7 @@ export function V0Chatbot() {
 		if (chatId && isPolling && !pollingIntervalRef.current) {
 			pollingIntervalRef.current = setInterval(() => {
 				pollChatUpdates(chatId);
-			}, 2000); // Poll every 2 seconds
+			}, 1000); // Poll every 1 second for real-time updates
 		}
 
 		return () => {
@@ -188,7 +219,7 @@ export function V0Chatbot() {
 		setInput("");
 		setIsLoading(true);
 		setIsPolling(true);
-		setPollingProgress("Sending request to v0...");
+		setPollingProgress("Generating...");
 		setAttachedImages([]);
 
 		try {
@@ -243,16 +274,7 @@ export function V0Chatbot() {
 				}
 			}
 
-			// Add assistant response
-			const assistantMessage: Message = {
-				id: (Date.now() + 1).toString(),
-				role: "assistant",
-				content:
-					"Generated your React application! Check the preview and code on the right.",
-				createdAt: new Date(),
-			};
-
-			setMessages((prev) => [...prev, assistantMessage]);
+			// Don't add a local assistant message - we'll get real messages from v0 via polling
 		} catch (error) {
 			console.error("Error:", error);
 			const errorMessage: Message = {
@@ -395,9 +417,15 @@ export function V0Chatbot() {
 								className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
 							>
 								<Card
-									className={`max-w-[80%] ${message.role === "user" ? "bg-primary text-primary-foreground" : ""}`}
+									className={`max-w-[80%] ${message.role === "user" ? "bg-primary text-primary-foreground" : message.isV0Message ? "border-blue-200 bg-blue-50" : ""}`}
 								>
 									<CardContent className="p-3">
+										{message.isV0Message && (
+											<div className="flex items-center gap-1 mb-2">
+												<div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+												<span className="text-xs text-blue-600 font-medium">v0</span>
+											</div>
+										)}
 										<div className="whitespace-pre-wrap">{message.content}</div>
 
 										<div className="text-xs opacity-70 mt-2">

@@ -48,21 +48,35 @@ export async function GET(req: Request) {
 
 		const chatData = await chatResponse.json();
 		
-		// Determine progress based on chat state
+		// Determine progress based on chat state and latest version status
 		let progressUpdate = "";
-		if (chatData.latestVersion?.demoUrl) {
+		const latestVersion = chatData.latestVersion;
+		
+		if (latestVersion?.status === "completed" && latestVersion?.demoUrl) {
 			progressUpdate = "App generated successfully!";
-		} else if (chatData.latestVersion?.files && chatData.latestVersion.files.length > 0) {
+		} else if (latestVersion?.status === "completed" && latestVersion?.files && latestVersion.files.length > 0) {
 			progressUpdate = "Code generated, preparing preview...";
+		} else if (latestVersion?.status === "pending") {
+			progressUpdate = "v0 is generating your app...";
+		} else if (latestVersion?.status === "failed") {
+			progressUpdate = "Generation failed, please try again";
 		} else {
-			progressUpdate = "v0 is analyzing your request...";
+			// Check if there are new messages from v0
+			const assistantMessages = chatData.messages?.filter((msg: any) => msg.role === "assistant") || [];
+			if (assistantMessages.length > 0) {
+				progressUpdate = "v0 is working on your request...";
+			} else {
+				progressUpdate = "v0 is analyzing your request...";
+			}
 		}
 
 		return new Response(
 			JSON.stringify({
 				success: true,
 				chat: chatData,
-				progressUpdate: chatData.latestVersion?.demoUrl ? "" : progressUpdate,
+				messages: chatData.messages || [],
+				latestVersion: chatData.latestVersion,
+				progressUpdate: latestVersion?.demoUrl ? "" : progressUpdate,
 			}),
 			{
 				headers: { "Content-Type": "application/json" },
