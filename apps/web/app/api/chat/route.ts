@@ -27,7 +27,7 @@ export async function POST(req: Request) {
 				name: "Quantum Apps AI Agent",
 				chatPrivacy: "private",
 				repo: {
-					url: "https://github.com/codepalette-ai/nextjs",
+					url: "https://github.com/codepalette-ai/nextjs-starter-kit",
 				},
 			};
 
