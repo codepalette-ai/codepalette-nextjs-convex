@@ -56,8 +56,21 @@ export function V0Chatbot() {
 	const [chatId, setChatId] = useState<string | null>(null);
 	const [pollingProgress, setPollingProgress] = useState<string>("");
 	const [isPolling, setIsPolling] = useState(false);
+	const [iframeError, setIframeError] = useState(false);
+	const [iframeLoading, setIframeLoading] = useState(true);
+	const [iframeKey, setIframeKey] = useState(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+	// Function to manually stop polling
+	const stopPolling = () => {
+		setIsPolling(false);
+		setPollingProgress("");
+		if (pollingIntervalRef.current) {
+			clearInterval(pollingIntervalRef.current);
+			pollingIntervalRef.current = null;
+		}
+	};
 
 	const handleImageAttachment = (
 		event: React.ChangeEvent<HTMLInputElement>,
@@ -84,6 +97,7 @@ export function V0Chatbot() {
 				if (data.messages && Array.isArray(data.messages)) {
 					const v0Messages: Message[] = data.messages
 						.filter((msg: any) => msg.role === "assistant")
+						.filter((msg: any) => !msg.content.includes('<CodeProject id="codepaletteainextjsstarterkit">'))
 						.map((msg: any) => ({
 							id: msg.id,
 							role: "assistant" as const,
@@ -110,34 +124,46 @@ export function V0Chatbot() {
 					});
 				}
 				
-				// Check if there's a new demo URL or files
+				// Always update the chat state with latest version info
 				const hasNewDemo = updatedChat.latestVersion?.demoUrl && 
 					updatedChat.latestVersion.demoUrl !== currentChat?.demoUrl &&
 					updatedChat.latestVersion.demoUrl !== currentChat?.latestVersion?.demoUrl;
 
-				if (hasNewDemo || data.progressUpdate || updatedChat.latestVersion) {
-					setCurrentChat({
-						id: updatedChat.id,
-						name: updatedChat.name || "v0 Chat",
-						webUrl: updatedChat.webUrl,
-						demoUrl: updatedChat.latestVersion?.demoUrl,
-						files: updatedChat.latestVersion?.files,
-						latestVersion: updatedChat.latestVersion,
-					});
+				const demoUrl = updatedChat.demoUrl || updatedChat.latestVersion?.demoUrl;
+				console.log('Polling update - Demo URL:', demoUrl, 'Progress:', data.progressUpdate);
 
-					if (data.progressUpdate) {
-						setPollingProgress(data.progressUpdate);
-					}
+				// Update current chat with latest version data
+				setCurrentChat({
+					id: updatedChat.id,
+					name: updatedChat.name || "v0 Chat",
+					webUrl: updatedChat.webUrl,
+					demoUrl: demoUrl,
+					files: updatedChat.latestVersion?.files,
+					latestVersion: updatedChat.latestVersion,
+				});
 
-					// If we got a demo URL, we can stop polling
-					if (hasNewDemo) {
-						setIsPolling(false);
-						setPollingProgress("");
-						if (pollingIntervalRef.current) {
-							clearInterval(pollingIntervalRef.current);
-							pollingIntervalRef.current = null;
-						}
+				// Update progress based on API response
+				if (data.progressUpdate !== undefined) {
+					setPollingProgress(data.progressUpdate);
+				}
+
+				// If we have a demo URL and no progress update, the app is ready
+				if (demoUrl && !data.progressUpdate) {
+					setPollingProgress("");
+					
+					// Stop polling when generation is fully complete
+					console.log('Generation complete, stopping polling');
+					setIsPolling(false);
+					if (pollingIntervalRef.current) {
+						clearInterval(pollingIntervalRef.current);
+						pollingIntervalRef.current = null;
 					}
+				}
+
+				// Force iframe reload on every polling cycle if we have a demo URL
+				if (demoUrl) {
+					console.log('Reloading iframe due to polling update');
+					reloadIframe();
 				}
 			}
 		} catch (error) {
@@ -150,7 +176,7 @@ export function V0Chatbot() {
 		if (chatId && isPolling && !pollingIntervalRef.current) {
 			pollingIntervalRef.current = setInterval(() => {
 				pollChatUpdates(chatId);
-			}, 1000); // Poll every 1 second for real-time updates
+			}, 20000); // Poll every 20 seconds for ongoing updates
 		}
 
 		return () => {
@@ -264,14 +290,8 @@ export function V0Chatbot() {
 					latestVersion: data.chat.latestVersion,
 				});
 
-				// If we have a demo URL immediately, stop polling
-				if (data.demoUrl || data.chat.latestVersion?.demoUrl) {
-					setIsPolling(false);
-					setPollingProgress("");
-				} else {
-					// Start polling for updates
-					setPollingProgress("v0 is generating your app...");
-				}
+				// Set initial progress - polling will update this appropriately
+				setPollingProgress("v0 is generating your app...");
 			}
 
 			// Don't add a local assistant message - we'll get real messages from v0 via polling
@@ -321,12 +341,67 @@ export function V0Chatbot() {
 		URL.revokeObjectURL(url);
 	};
 
+	// Get the demo URL using consistent logic
+	const getDemoUrl = () => {
+		return currentChat?.latestVersion?.demoUrl || currentChat?.demoUrl;
+	};
+
 	const openDemo = () => {
-		const demoUrl = currentChat?.demoUrl || currentChat?.latestVersion?.demoUrl;
+		const demoUrl = getDemoUrl();
 		if (demoUrl) {
 			window.open(demoUrl, "_blank");
 		}
 	};
+
+	// Handle iframe load events
+	const handleIframeLoad = () => {
+		setIframeLoading(false);
+		setIframeError(false);
+	};
+
+	const handleIframeError = () => {
+		setIframeLoading(false);
+		setIframeError(true);
+	};
+
+	const reloadIframe = () => {
+		setIframeError(false);
+		setIframeLoading(true);
+		setIframeKey(prev => prev + 1); // Force React to recreate the iframe
+		
+		// Also try to reload existing iframe as backup
+		setTimeout(() => {
+			const iframe = document.querySelector('iframe[title="v0 Generated App Preview"]') as HTMLIFrameElement;
+			if (iframe && iframe.src) {
+				const currentSrc = iframe.src;
+				iframe.src = '';
+				setTimeout(() => {
+					iframe.src = currentSrc + (currentSrc.includes('?') ? '&' : '?') + 'refresh=' + Date.now();
+				}, 100);
+			}
+		}, 200);
+	};
+
+	const retryIframe = () => {
+		reloadIframe();
+	};
+
+	// Reset iframe states when URL changes with a small delay to ensure URL is ready
+	useEffect(() => {
+		const demoUrl = getDemoUrl();
+		if (demoUrl) {
+			setIframeLoading(true);
+			setIframeError(false);
+			
+			// Add a small delay to give the v0 URL time to be fully available
+			const timer = setTimeout(() => {
+				// This will trigger a re-render to ensure iframe loads with stable URL
+				setIframeLoading(true);
+			}, 1000);
+			
+			return () => clearTimeout(timer);
+		}
+	}, [currentChat?.demoUrl, currentChat?.latestVersion?.demoUrl]);
 
 	const openInV0 = () => {
 		if (currentChat?.webUrl) {
@@ -388,10 +463,24 @@ export function V0Chatbot() {
 			{/* Left Panel - Chat Interface (25%) */}
 			<div className="w-1/4 flex flex-col border-r">
 				<div className="p-4 border-b">
-					<h1 className="text-2xl font-bold">Quantum Apps AI</h1>
-					<p className="text-muted-foreground">
-						Generate React + Vite applications with AI
-					</p>
+					<div className="flex items-center justify-between">
+						<div>
+							<h1 className="text-2xl font-bold">Quantum Apps AI</h1>
+							<p className="text-muted-foreground">
+								Generate React + Vite applications with AI
+							</p>
+						</div>
+						{isPolling && (
+							<Button 
+								size="sm" 
+								variant="outline" 
+								onClick={stopPolling}
+								className="text-xs"
+							>
+								Stop Updates
+							</Button>
+						)}
+					</div>
 				</div>
 
 				{/* Messages */}
@@ -417,15 +506,9 @@ export function V0Chatbot() {
 								className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
 							>
 								<Card
-									className={`max-w-[80%] ${message.role === "user" ? "bg-primary text-primary-foreground" : message.isV0Message ? "border-blue-200 bg-blue-50" : ""}`}
+									className={`max-w-[80%] ${message.role === "user" ? "bg-primary text-primary-foreground" : ""}`}
 								>
 									<CardContent className="p-3">
-										{message.isV0Message && (
-											<div className="flex items-center gap-1 mb-2">
-												<div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-												<span className="text-xs text-blue-600 font-medium">v0</span>
-											</div>
-										)}
 										<div className="whitespace-pre-wrap">{message.content}</div>
 
 										<div className="text-xs opacity-70 mt-2">
@@ -436,7 +519,7 @@ export function V0Chatbot() {
 							</div>
 						))}
 
-						{(isLoading || isPolling) && (
+						{(isLoading || (isPolling && pollingProgress)) && (
 							<div className="flex justify-start">
 								<Card className="max-w-[80%]">
 									<CardContent className="p-3">
@@ -533,9 +616,7 @@ export function V0Chatbot() {
 								size="sm"
 								variant="outline"
 								onClick={openDemo}
-								disabled={
-									!currentChat.demoUrl && !currentChat.latestVersion?.demoUrl
-								}
+								disabled={!getDemoUrl()}
 							>
 								<ExternalLink className="h-4 w-4 mr-2" />
 								Open Full Screen
@@ -550,27 +631,73 @@ export function V0Chatbot() {
 
 				{currentChat ? (
 					<div className="flex-1 p-4">
-						{currentChat.demoUrl || currentChat.latestVersion?.demoUrl ? (
-							<div className="h-full">
-								<iframe
-									src={
-										currentChat.demoUrl ||
-										currentChat.latestVersion?.demoUrl
-									}
-									className="w-full h-full rounded-md border border-border"
-									title="v0 Generated App Preview"
-								/>
+						{getDemoUrl() ? (
+							<div className="h-full relative">
+								{iframeLoading && (
+									<div className="absolute inset-0 bg-muted rounded-md flex items-center justify-center z-10">
+										<div className="text-center text-muted-foreground">
+											<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+											<p className="text-sm">Loading preview...</p>
+										</div>
+									</div>
+								)}
+								{iframeError ? (
+									<div className="h-full bg-muted rounded-md flex items-center justify-center">
+										<div className="text-center text-muted-foreground">
+											<p className="text-lg font-medium mb-2">Preview not available</p>
+											<p className="text-sm mb-4">The preview is still being generated or there was an error loading it.</p>
+											<div className="flex gap-2 justify-center">
+												<Button onClick={retryIframe} variant="outline" size="sm">
+													Retry
+												</Button>
+												<Button onClick={openDemo} variant="outline" size="sm">
+													<ExternalLink className="h-4 w-4 mr-2" />
+													Open in New Tab
+												</Button>
+											</div>
+										</div>
+									</div>
+								) : (
+									(() => {
+										const iframeUrl = getDemoUrl();
+										console.log('Loading iframe with URL:', iframeUrl, 'Key:', iframeKey);
+										console.log('Open full screen would use URL:', iframeUrl);
+										return (
+											<iframe
+												key={`${iframeUrl}-${iframeKey}`}
+												src={iframeUrl}
+												className="w-full h-full rounded-md border border-border"
+												title="v0 Generated App Preview"
+												onLoad={handleIframeLoad}
+												onError={handleIframeError}
+												sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+											/>
+										);
+									})()
+								)}
 							</div>
 						) : (
 							<div className="h-full bg-muted rounded-md flex items-center justify-center">
 								<div className="text-center text-muted-foreground">
-									<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-									<p className="text-lg font-medium">
-										{pollingProgress || "Generating your app..."}
-									</p>
-									<p className="text-sm mt-2">
-										v0 is working on your request. Preview will appear here shortly.
-									</p>
+									{pollingProgress ? (
+										<>
+											<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+											<p className="text-lg font-medium">{pollingProgress}</p>
+											<p className="text-sm mt-2">
+												v0 is working on your request. Preview will appear here shortly.
+											</p>
+										</>
+									) : (
+										<>
+											<div className="h-12 w-12 bg-muted-foreground/20 rounded-full mx-auto mb-4 flex items-center justify-center">
+												<span className="text-2xl">🎯</span>
+											</div>
+											<p className="text-lg font-medium">Waiting for your request</p>
+											<p className="text-sm mt-2">
+												Start a conversation to generate your app preview.
+											</p>
+										</>
+									)}
 								</div>
 							</div>
 						)}

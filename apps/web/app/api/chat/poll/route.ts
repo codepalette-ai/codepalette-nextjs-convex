@@ -51,9 +51,22 @@ export async function GET(req: Request) {
 		// Determine progress based on chat state and latest version status
 		let progressUpdate = "";
 		const latestVersion = chatData.latestVersion;
+		const assistantMessages = chatData.messages?.filter((msg: any) => msg.role === "assistant") || [];
 		
 		if (latestVersion?.status === "completed" && latestVersion?.demoUrl) {
-			progressUpdate = "App generated successfully!";
+			// Check if there are very recent messages (last 2 minutes) indicating active work
+			const recentMessages = assistantMessages.filter((msg: any) => {
+				const msgTime = new Date(msg.createdAt).getTime();
+				const oneMinuteAgo = Date.now() - (1 * 60 * 1000);
+				return msgTime > oneMinuteAgo;
+			});
+			
+			if (recentMessages.length > 0) {
+				progressUpdate = "App ready! Checking for ongoing updates...";
+			} else {
+				// App is ready and stable
+				progressUpdate = "";
+			}
 		} else if (latestVersion?.status === "completed" && latestVersion?.files && latestVersion.files.length > 0) {
 			progressUpdate = "Code generated, preparing preview...";
 		} else if (latestVersion?.status === "pending") {
@@ -62,7 +75,6 @@ export async function GET(req: Request) {
 			progressUpdate = "Generation failed, please try again";
 		} else {
 			// Check if there are new messages from v0
-			const assistantMessages = chatData.messages?.filter((msg: any) => msg.role === "assistant") || [];
 			if (assistantMessages.length > 0) {
 				progressUpdate = "v0 is working on your request...";
 			} else {
@@ -76,7 +88,7 @@ export async function GET(req: Request) {
 				chat: chatData,
 				messages: chatData.messages || [],
 				latestVersion: chatData.latestVersion,
-				progressUpdate: latestVersion?.demoUrl ? "" : progressUpdate,
+				progressUpdate: progressUpdate,
 			}),
 			{
 				headers: { "Content-Type": "application/json" },
